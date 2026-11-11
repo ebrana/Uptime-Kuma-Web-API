@@ -2,7 +2,11 @@
 
 
 
-## A REST API wrapper for [Uptime Kuma](https://github.com/louislam/uptime-kuma) using [Uptime-Kuma-API](https://github.com/lucasheld/uptime-kuma-api)
+## A REST API wrapper for [Uptime Kuma](https://github.com/louislam/uptime-kuma) using [uptime-kuma-api2](https://github.com/pbarone/uptime-kuma-api2)
+
+This fork works with **Uptime Kuma 2.x** (tested against 2.5.9). It supports `json-query`
+monitors (`jsonPath`, `jsonPathOperator`, `expectedValue`) and the other monitor types of the
+2.x line.
 
 ---
 
@@ -29,7 +33,13 @@ You have to define these ENV VARS in order to connect to your KUMA server.
 Additional configuration variables available
 
     ACCESS_TOKEN_EXPIRATION: Minutes the access token should be valid. Defaults to 8 days.
-    SECRET_KEY: A secret value to encode JWTs with
+    SECRET_KEY: A secret value to encode JWTs with. Set it: without it a new random key is
+                used on every start and all issued tokens stop working after a restart.
+    APP_VERSION: Version shown in /openapi.json and /docs. Set it to the deployed release tag.
+    KUMA_TIMEOUT: Seconds to wait for Uptime Kuma to connect and to answer. Defaults to 10.
+    ENFORCE_HTTPS: Redirect requests that did not arrive over https (reads X-Forwarded-Proto).
+                   Defaults to true. Set to false when there is no TLS proxy in front.
+    CORS_ALLOW_ORIGINS: Comma separated list of allowed CORS origins. Defaults to * (all).
 
 #### Note:
 
@@ -45,7 +55,7 @@ You will connect with those credentials:
 - Multi user Kuma api ( without privilege YET!!) with a small SQLite db
 - Easy to use REST API with most of the Uptime-Kuma features
 - Swagger Docs
-- Dockerized [UptimeKuma_RestAPI Image](https://hub.docker.com/repository/docker/medaziz11/uptimekuma_restapi)
+- Dockerized: build the image from this repository (`docker build .`). The upstream Docker Hub image does not contain this fork.
 - Multi-architecture support (amd64, arm64)
 
 
@@ -68,7 +78,7 @@ services:
 
   api:
     container_name: backend
-    image: medaziz11/uptimekuma_restapi
+    build: .  # run from a checkout of this repository
     volumes:
       - api:/db
     restart: always
@@ -103,6 +113,22 @@ curl -X GET \
 ```
 
 ---
+
+## Testing
+
+`tests/contract.sh` replays the calls an API client makes to manage monitors and tags and
+checks the response shapes against a real Uptime Kuma. It needs Docker, curl and jq.
+
+```bash
+docker compose up -d --build
+NOTIFICATION_ID=$(docker compose exec -T api python - < tests/seed_kuma.py)
+NOTIFICATION_ID=$NOTIFICATION_ID tests/contract.sh
+docker compose down -v
+```
+
+The first run of the seed script creates the Kuma admin user and can take a minute. Use
+`KUMA_VERSION` to test another Uptime Kuma release and `API_PORT` / `KUMA_PORT` to change the
+published ports. Run it before upgrading Uptime Kuma on a server.
 
 ## API Documentation
 
