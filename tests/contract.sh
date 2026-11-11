@@ -7,28 +7,40 @@
 #   NOTIFICATION_ID=$(docker compose exec -T api python - < tests/seed_kuma.py)
 #   NOTIFICATION_ID=$NOTIFICATION_ID tests/contract.sh
 #
+# Run the seed script first: NOTIFICATION_ID is required (the id it prints).
 # Exits non-zero on the first failed check.
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:${API_PORT:-8000}}"
 API_USERNAME="${API_USERNAME:-admin}"
 API_PASSWORD="${API_PASSWORD:-admin}"
-NOTIFICATION_ID="${NOTIFICATION_ID:-1}"
+NOTIFICATION_ID="${NOTIFICATION_ID:-}"
+if [[ ! "${NOTIFICATION_ID}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "NOTIFICATION_ID must be a positive integer. Run tests/seed_kuma.py first and pass the id it prints." >&2
+  exit 2
+fi
 # URL the json-query monitor checks, as seen from the Uptime Kuma container. Any JSON
 # document without a queue named "failed" makes the query below return 0.
 JSON_URL="${JSON_URL:-http://api:8000/openapi.json}"
 # Seconds to wait for the first heartbeat of the json-query monitor.
 HEARTBEAT_WAIT="${HEARTBEAT_WAIT:-60}"
 
-RUN_ID="contract-$$"
+RUN_ID="contract-$(date +%s)-$$"
 STEP=0
 BODY_FILE=$(mktemp)
 MONITOR_IDS=()
+TAG_ID=""
+TOKEN=""
 trap 'cleanup' EXIT
 
 cleanup() {
-  for id in "${MONITOR_IDS[@]}"; do
-    curl -s -o /dev/null -X DELETE -H "Authorization: Bearer ${TOKEN}" "${BASE_URL}/monitors/${id}"
-  done
+  if [ -n "${TOKEN}" ]; then
+    for id in "${MONITOR_IDS[@]}"; do
+      curl -s -o /dev/null -X DELETE -H "Authorization: Bearer ${TOKEN}" "${BASE_URL}/monitors/${id}"
+    done
+    if [ -n "${TAG_ID}" ]; then
+      curl -s -o /dev/null -X DELETE -H "Authorization: Bearer ${TOKEN}" "${BASE_URL}/tags/${TAG_ID}"
+    fi
+  fi
   rm -f "${BODY_FILE}"
 }
 
@@ -80,8 +92,8 @@ MONITOR_IDS+=("${HTTP_MONITOR_ID}")
 
 # 4. List monitors: {"monitors": [...]} with id and url
 status=$(call GET /monitors)
-found=$(jq -r --arg url "${QUEUE_URL}" '.monitors[] | select(.url == $url) | .id' "${BODY_FILE}" 2>/dev/null)
-[ "${status}" = 200 ] && [ "${found}" = "${JSON_MONITOR_ID}" ] && pass "list monitors finds the monitor by url" || fail "list monitors (HTTP ${status})"
+[ "${status}" = 200 ] && jq -e --arg url "${QUEUE_URL}" --arg id "${JSON_MONITOR_ID}" \
+  'any(.monitors[]; .url == $url and (.id | tostring) == $id)' "${BODY_FILE}" > /dev/null 2>&1 && pass "list monitors finds the monitor by url" || fail "list monitors (HTTP ${status})"
 
 # 5. Tags: list, create, attach
 status=$(call GET /tags)
@@ -97,7 +109,11 @@ status=$(call POST "/monitors/${JSON_MONITOR_ID}/tag" "$(jq -n --argjson id "${T
 status=$(call GET "/monitors/${JSON_MONITOR_ID}")
 [ "${status}" = 200 ] && jq -e --arg name "${TAG_NAME}" 'any(.tags[]; .name == $name) and any(.monitor.tags[]; .name == $name)' "${BODY_FILE}" > /dev/null \
   && pass "get monitor returns tags at the top level" || fail "get monitor tags (HTTP ${status})"
-jq -e '.monitor | .type == "json-query" and .jsonPathOperator == "==" and .expectedValue == "0" and (.jsonPath | startswith("$sum("))' "${BODY_FILE}" > /dev/null \
+# notificationIDList comes back as a list of ids or as an object keyed by id.
+jq -e --argjson nid "${NOTIFICATION_ID}" '.monitor | .type == "json-query" and .jsonPathOperator == "==" and .expectedValue == "0"
+  and (.jsonPath | startswith("$sum("))
+  and (.notificationIDList | if type == "object" then has($nid | tostring) else any(.[]; tostring == ($nid | tostring)) end)' \
+  "${BODY_FILE}" > /dev/null \
   && pass "json-query fields are stored" || fail "json-query fields"
 
 # 7. Update the http monitor with a full body
@@ -111,7 +127,9 @@ status=$(call PATCH /monitors/999999 "${http_body}")
 
 # 8. The json-query monitor goes UP (status 1) in Uptime Kuma
 up=""
-for _ in $(seq 1 $((HEARTBEAT_WAIT / 5))); do
+attempts=$((HEARTBEAT_WAIT / 5))
+[ "${attempts}" -lt 1 ] && attempts=1
+for _ in $(seq 1 "${attempts}"); do
   status=$(call GET "/monitors/${JSON_MONITOR_ID}/beats?hours=1")
   up=$(jq -r '.monitor_beats[-1].status // empty' "${BODY_FILE}" 2>/dev/null)
   [ -n "${up}" ] && break
@@ -127,6 +145,8 @@ status=$(call DELETE "/monitors/${HTTP_MONITOR_ID}")
 status=$(call DELETE "/monitors/${JSON_MONITOR_ID}")
 [ "${status}" = 200 ] && pass "delete json-query monitor" || fail "delete json-query monitor (HTTP ${status})"
 MONITOR_IDS=()
-call DELETE "/tags/${TAG_ID}" > /dev/null
+status=$(call DELETE "/tags/${TAG_ID}")
+[ "${status}" = 200 ] && pass "delete tag" || fail "delete tag (HTTP ${status})"
+TAG_ID=""
 
 echo "all ${STEP} checks passed"

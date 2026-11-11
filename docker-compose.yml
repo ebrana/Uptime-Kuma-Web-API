@@ -1,9 +1,10 @@
-# Local test stack: Uptime Kuma 2.x plus this API. See README, section "Testing".
+# Local test stack only: Uptime Kuma 2.x plus this API. See README, section "Testing".
+# Credentials are fixed test values and ports listen on 127.0.0.1 only. Not for deployment.
 services:
   kuma:
     image: louislam/uptime-kuma:${KUMA_VERSION:-2.5.9}
     ports:
-      - "${KUMA_PORT:-3001}:3001"
+      - "127.0.0.1:${KUMA_PORT:-3001}:3001"
     restart: unless-stopped
     environment:
       # Skip the database setup screen of Uptime Kuma 2.x.
@@ -18,17 +19,18 @@ services:
     depends_on:
       - kuma
     environment:
-      - KUMA_SERVER=${KUMA_SERVER:-http://kuma:3001}
-      - KUMA_USERNAME=${KUMA_USERNAME:-test}
-      - KUMA_PASSWORD=${KUMA_PASSWORD:-123test.}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      # Fixed on purpose: a local .env must not point the tests at a real Uptime Kuma.
+      - KUMA_SERVER=http://kuma:3001
+      - KUMA_USERNAME=test
+      - KUMA_PASSWORD=123test.
+      - ADMIN_PASSWORD=admin
       # - ACCESS_TOKEN_EXPIRATION=${ACCESS_TOKEN_EXPIRATION:-1}
       - SECRET_KEY=${SECRET_KEY:-pO8WunLtrznm2i4NfOJ25BkG4sh4kYwN1FjzZp8O6E0} #random 32bit string that's url safe.
       - APP_VERSION=${APP_VERSION:-dev}
       # Plain http on purpose: there is no TLS proxy in front of this local stack.
-      - ENFORCE_HTTPS=${ENFORCE_HTTPS:-false}
+      - ENFORCE_HTTPS=false
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
 
 volumes:
   uptime-kuma:

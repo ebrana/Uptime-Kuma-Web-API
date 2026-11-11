@@ -38,6 +38,10 @@ async def get_current_user(token: str = Depends(oauth2_token)):
         if api is not None:
             api.disconnect()
         raise HTTPException(400, {"error": str(e)})
+    except Exception:
+        if api is not None:
+            api.disconnect()
+        raise
 
     # One Socket.io connection per request: close it when the request is done,
     # otherwise every call leaves an open connection to Uptime Kuma behind.

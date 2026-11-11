@@ -10,17 +10,32 @@ DEFAULT_JSON_PATH_OPERATOR = "=="
 DEFAULT_DNS_PORT = 53
 
 
-def apply_type_defaults(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Fill in the values Uptime Kuma 2.x needs but API clients usually leave out."""
-    monitor_type = data.get("type")
+def apply_type_defaults(
+    data: Dict[str, Any], existing: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Fill in the values Uptime Kuma 2.x needs but API clients usually leave out.
+
+    `existing` is the stored monitor on update: a default is applied only when
+    neither the request nor the stored monitor has a value.
+    """
+    existing = existing or {}
+    monitor_type = data.get("type") or existing.get("type")
     monitor_type = getattr(monitor_type, "value", monitor_type)
 
     # Kuma 2.x evaluates a json-query monitor with this operator. Without one every
     # check fails with "Invalid condition", so the monitor would be DOWN forever.
-    if monitor_type == JSON_QUERY and not data.get("jsonPathOperator"):
+    if (
+        monitor_type == JSON_QUERY
+        and not data.get("jsonPathOperator")
+        and not existing.get("jsonPathOperator")
+    ):
         data["jsonPathOperator"] = DEFAULT_JSON_PATH_OPERATOR
 
-    if monitor_type == DNS and data.get("port") is None:
+    if (
+        monitor_type == DNS
+        and data.get("port") is None
+        and existing.get("port") is None
+    ):
         data["port"] = DEFAULT_DNS_PORT
 
     return data

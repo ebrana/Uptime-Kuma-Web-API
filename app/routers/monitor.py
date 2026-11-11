@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Path
-from uptime_kuma_api import UptimeKumaApi, UptimeKumaException
+from uptime_kuma_api import UptimeKumaApi, UptimeKumaException, Timeout
 
 from schemas.monitor import Monitor, MonitorUpdate, MonitorTag, apply_type_defaults
 from schemas.api import API
@@ -44,9 +44,16 @@ async def create_monitor(monitor: Monitor,cur_user: API = Depends(get_current_us
     try:
         # None means "not given": the library then applies its own defaults.
         resp = api.add_monitor(**monitor.dict(exclude_none=True))
+    except KeyError as e:
+        # The library has no argument table for this monitor type.
+        logging.error(e)
+        raise HTTPException(422, f"Monitor type not supported: {e}")
     except (TypeError, ValueError) as e:
         logging.error(e)
         raise HTTPException(422, str(e) )
+    except Timeout as e:
+        logging.error(e)
+        raise HTTPException(504, {"message": "Uptime Kuma did not answer in time"})
     except UptimeKumaException as e:
         logging.error(e)
         raise HTTPException(400, {"message": str(e)})
@@ -59,10 +66,11 @@ async def create_monitor(monitor: Monitor,cur_user: API = Depends(get_current_us
 @router.patch("/{monitor_id}", description="Update a specific Monitor")
 async def update_monitor(monitor: MonitorUpdate,monitor_id:int=Path(...) ,cur_user: API = Depends(get_current_user)):
     api: UptimeKumaApi = cur_user['api']
-    # Only the fields the client sent, plus the defaults their monitor type needs.
-    monitor_data = apply_type_defaults(monitor.dict(exclude_unset=True))
     try:
-        api.get_monitor(monitor_id)
+        existing = api.get_monitor(monitor_id)
+    except Timeout as e:
+        logging.error(e)
+        raise HTTPException(504, {"message": "Uptime Kuma did not answer in time"})
     except UptimeKumaException as e:
         logging.info(e)
         raise HTTPException(404, {"message": "Monitor not found !"})
@@ -70,11 +78,22 @@ async def update_monitor(monitor: MonitorUpdate,monitor_id:int=Path(...) ,cur_us
         logging.fatal(e)
         raise HTTPException(500, str(e))
 
+    # Only the fields the client sent, plus the defaults their monitor type needs
+    # when the stored monitor has no value either.
+    monitor_data = apply_type_defaults(monitor.dict(exclude_unset=True), existing)
+
     try:
         resp = api.edit_monitor(id_=monitor_id, **monitor_data)
+    except KeyError as e:
+        # The library has no argument table for this monitor type.
+        logging.error(e)
+        raise HTTPException(422, f"Monitor type not supported: {e}")
     except (TypeError, ValueError) as e:
         logging.error(e)
         raise HTTPException(422, str(e) )
+    except Timeout as e:
+        logging.error(e)
+        raise HTTPException(504, {"message": "Uptime Kuma did not answer in time"})
     except UptimeKumaException as e:
         logging.error(e)
         raise HTTPException(400, {"message": str(e)})
