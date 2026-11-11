@@ -2,7 +2,23 @@
 
 
 
-## A REST API wrapper for [Uptime Kuma](https://github.com/louislam/uptime-kuma) using [Uptime-Kuma-API](https://github.com/lucasheld/uptime-kuma-api)
+## A REST API wrapper for [Uptime Kuma](https://github.com/louislam/uptime-kuma) using [uptime-kuma-api2](https://github.com/pbarone/uptime-kuma-api2)
+
+This fork works with **Uptime Kuma 2.x** (tested against 2.5.9). It supports `json-query`
+monitors (`jsonPath`, `jsonPathOperator`, `expectedValue`) and the other monitor types of the
+2.x line.
+
+## Changes in this fork
+
+- Works with Uptime Kuma 2.x through [uptime-kuma-api2](https://github.com/pbarone/uptime-kuma-api2).
+- `json-query` monitors with `jsonPath`, `jsonPathOperator` (defaults to `==`) and `expectedValue`.
+- `GET /monitors/{id}` also returns `tags` at the top level.
+- Create and update answer 400 with the Uptime Kuma message (was 500), 422 for an unsupported
+  monitor type and 504 when Uptime Kuma does not answer in time. Update answers 404 only for a
+  missing monitor.
+- `port` no longer defaults to 53, except for DNS monitors. Port, steam, mqtt and gamedig
+  monitors must send it.
+- The Docker Hub image of the upstream project does not contain these changes.
 
 ---
 
@@ -29,7 +45,13 @@ You have to define these ENV VARS in order to connect to your KUMA server.
 Additional configuration variables available
 
     ACCESS_TOKEN_EXPIRATION: Minutes the access token should be valid. Defaults to 8 days.
-    SECRET_KEY: A secret value to encode JWTs with
+    SECRET_KEY: A secret value to encode JWTs with. Set it: without it a new random key is
+                used on every start and all issued tokens stop working after a restart.
+    APP_VERSION: Version shown in /openapi.json and /docs. Set it to the deployed release tag.
+    KUMA_TIMEOUT: Seconds to wait for Uptime Kuma to connect and to answer. Defaults to 10.
+    ENFORCE_HTTPS: Redirect requests that did not arrive over https (reads X-Forwarded-Proto).
+                   Defaults to true. Set to false when there is no TLS proxy in front.
+    CORS_ALLOW_ORIGINS: Comma separated list of allowed CORS origins. Defaults to * (all).
 
 #### Note:
 
@@ -45,8 +67,7 @@ You will connect with those credentials:
 - Multi user Kuma api ( without privilege YET!!) with a small SQLite db
 - Easy to use REST API with most of the Uptime-Kuma features
 - Swagger Docs
-- Dockerized [UptimeKuma_RestAPI Image](https://hub.docker.com/repository/docker/medaziz11/uptimekuma_restapi)
-- Multi-architecture support (amd64, arm64)
+- Dockerized: build the image from this repository (`docker build .`). The upstream Docker Hub image does not contain this fork.
 
 
 
@@ -59,16 +80,18 @@ version: "3.9"
 services:
   kuma:
     container_name: uptime-kuma
-    image: louislam/uptime-kuma:latest
+    image: louislam/uptime-kuma:2.5.9
     ports:
       - "3001:3001"
     restart: always
+    environment:
+      - UPTIME_KUMA_DB_TYPE=sqlite
     volumes:
       - uptime-kuma:/app/data
 
   api:
     container_name: backend
-    image: medaziz11/uptimekuma_restapi
+    build: .  # run from a checkout of this repository
     volumes:
       - api:/db
     restart: always
@@ -77,6 +100,8 @@ services:
       - KUMA_USERNAME=test
       - KUMA_PASSWORD=123test.
       - ADMIN_PASSWORD=admin
+      - SECRET_KEY=<set a random value>
+      - ENFORCE_HTTPS=false
     depends_on:
       - kuma
     ports:
@@ -86,6 +111,9 @@ volumes:
   uptime-kuma:
   api:
 ```
+
+`ENFORCE_HTTPS=false` is for running without a TLS proxy, as the curl example below does.
+Behind a TLS proxy, leave it at its default.
 
 ### In order for the example to work: You have to run kuma first then create your kuma username and password then re-run the compose file.
 
@@ -103,6 +131,25 @@ curl -X GET \
 ```
 
 ---
+
+## Testing
+
+`tests/contract.sh` replays the calls an API client makes to manage monitors and tags and
+checks the response shapes against a real Uptime Kuma. It needs Docker, curl and jq.
+
+```bash
+docker compose up -d --build
+NOTIFICATION_ID=$(docker compose exec -T api python - < tests/seed_kuma.py)
+NOTIFICATION_ID=$NOTIFICATION_ID tests/contract.sh
+docker compose down -v
+```
+
+The seed script waits for Uptime Kuma to start (up to two minutes). On the first run it
+creates the Kuma admin user. The compose stack uses fixed test credentials and listens on
+127.0.0.1 only, so it is for local tests, not for deployment. Use `KUMA_VERSION` to test
+another Uptime Kuma release and `API_PORT` / `KUMA_PORT` to change the published ports.
+`API_PORT` also changes the port that `tests/contract.sh` calls. Run it before upgrading
+Uptime Kuma on a server.
 
 ## API Documentation
 

@@ -20,13 +20,27 @@ from routers import (
 from config import settings as app_settings, logger
 from app_setup import initialize_app
 
-app = FastAPI(title=app_settings.PROJECT_NAME)
+
+def parse_cors_origins(value: str) -> list:
+    # Browsers send the Origin header without a trailing slash, so
+    # "https://example.com/" would never match.
+    origins = []
+    for origin in value.split(","):
+        origin = origin.strip()
+        if origin != "*":
+            origin = origin.rstrip("/")
+        if origin:
+            origins.append(origin)
+    return origins
+
+
+app = FastAPI(title=app_settings.PROJECT_NAME, version=app_settings.APP_VERSION)
 app.router.redirect_slashes = True
 
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=parse_cors_origins(app_settings.CORS_ALLOW_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,7 +48,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def enforce_https(request: Request, call_next):
-    if request.headers.get('x-forwarded-proto', request.url.scheme) != "https":
+    if app_settings.ENFORCE_HTTPS and request.headers.get('x-forwarded-proto', request.url.scheme) != "https":
         url = request.url.replace(scheme="https")
         return RedirectResponse(url=url)
     response = await call_next(request)

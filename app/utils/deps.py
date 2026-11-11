@@ -29,14 +29,26 @@ async def get_current_user(token: str = Depends(oauth2_token)):
     except jwt.exceptions.ExpiredSignatureError as e:
         logging.info(e)
         raise HTTPException(status_code=403, detail="Token expired !!")
+    api = None
     try:
-        api = UptimeKumaApi(settings.KUMA_SERVER)
+        api = UptimeKumaApi(settings.KUMA_SERVER, timeout=settings.KUMA_TIMEOUT)
         api.login_by_token(token_data.sub)
-        user = {"token": token_data.sub, "api": api}
-        return user
     except UptimeKumaException as e:
         logging.fatal(e)
+        if api is not None:
+            api.disconnect()
         raise HTTPException(400, {"error": str(e)})
+    except Exception:
+        if api is not None:
+            api.disconnect()
+        raise
+
+    # One Socket.io connection per request: close it when the request is done,
+    # otherwise every call leaves an open connection to Uptime Kuma behind.
+    try:
+        yield {"token": token_data.sub, "api": api}
+    finally:
+        api.disconnect()
 
 
 def authenticate(user: UserCreate, password: str) -> Optional[UserResponse]:

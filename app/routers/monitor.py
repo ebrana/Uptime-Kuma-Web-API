@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Path
-from uptime_kuma_api import UptimeKumaApi, UptimeKumaException
+from uptime_kuma_api import UptimeKumaApi, UptimeKumaException, Timeout
 
-from schemas.monitor import Monitor, MonitorUpdate, MonitorTag
+from schemas.monitor import Monitor, MonitorUpdate, MonitorTag, apply_type_defaults
 from schemas.api import API
 from utils.deps import get_current_user
 from config import logger as logging
@@ -32,7 +32,8 @@ async def get_monitor(monitor_id:int=Path(...) , cur_user: API = Depends(get_cur
             logging.fatal(e)
             raise HTTPException(500, str(e))
 
-        return {"monitor": monitor }
+        # "tags" is repeated at the top level for clients that read it there.
+        return {"monitor": monitor, "tags": monitor.get("tags", [])}
 
     raise HTTPException(404, {"message": "Monitor not found !"})
 
@@ -41,10 +42,21 @@ async def get_monitor(monitor_id:int=Path(...) , cur_user: API = Depends(get_cur
 async def create_monitor(monitor: Monitor,cur_user: API = Depends(get_current_user)):
     api: UptimeKumaApi = cur_user['api']
     try:
-        resp = api.add_monitor(**monitor.dict())
-    except TypeError as e:
+        # None means "not given": the library then applies its own defaults.
+        resp = api.add_monitor(**monitor.dict(exclude_none=True))
+    except KeyError as e:
+        # The library has no argument table for this monitor type.
+        logging.error(e)
+        raise HTTPException(422, f"Monitor type not supported: {e}")
+    except (TypeError, ValueError) as e:
         logging.error(e)
         raise HTTPException(422, str(e) )
+    except Timeout as e:
+        logging.error(e)
+        raise HTTPException(504, {"message": "Uptime Kuma did not answer in time"})
+    except UptimeKumaException as e:
+        logging.error(e)
+        raise HTTPException(400, {"message": str(e)})
     except Exception as e :
         logging.fatal(e)
         raise HTTPException(500, str(e))
@@ -55,18 +67,41 @@ async def create_monitor(monitor: Monitor,cur_user: API = Depends(get_current_us
 async def update_monitor(monitor: MonitorUpdate,monitor_id:int=Path(...) ,cur_user: API = Depends(get_current_user)):
     api: UptimeKumaApi = cur_user['api']
     try:
-        resp = api.edit_monitor(id_=monitor_id, **monitor.dict(exclude_unset=True))
+        existing = api.get_monitor(monitor_id)
+    except Timeout as e:
+        logging.error(e)
+        raise HTTPException(504, {"message": "Uptime Kuma did not answer in time"})
     except UptimeKumaException as e:
         logging.info(e)
         raise HTTPException(404, {"message": "Monitor not found !"})
-    except TypeError as e:
-        logging.error(e)
-        raise HTTPException(422, str(e) )
     except Exception as e :
         logging.fatal(e)
         raise HTTPException(500, str(e))
 
-    return {**resp, "monitor_data":monitor.dict(exclude_unset=True)}
+    # Only the fields the client sent, plus the defaults their monitor type needs
+    # when the stored monitor has no value either.
+    monitor_data = apply_type_defaults(monitor.dict(exclude_unset=True), existing)
+
+    try:
+        resp = api.edit_monitor(id_=monitor_id, **monitor_data)
+    except KeyError as e:
+        # The library has no argument table for this monitor type.
+        logging.error(e)
+        raise HTTPException(422, f"Monitor type not supported: {e}")
+    except (TypeError, ValueError) as e:
+        logging.error(e)
+        raise HTTPException(422, str(e) )
+    except Timeout as e:
+        logging.error(e)
+        raise HTTPException(504, {"message": "Uptime Kuma did not answer in time"})
+    except UptimeKumaException as e:
+        logging.error(e)
+        raise HTTPException(400, {"message": str(e)})
+    except Exception as e :
+        logging.fatal(e)
+        raise HTTPException(500, str(e))
+
+    return {**resp, "monitor_data":monitor_data}
 
 @router.delete("/{monitor_id}", description="Delete a specific Monitor")
 async def delete_monitor(monitor_id:int=Path(...) ,cur_user: API = Depends(get_current_user)):
