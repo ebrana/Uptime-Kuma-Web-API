@@ -24,12 +24,13 @@ async def login_access_token(form_data : OAuth2PasswordRequestForm = Depends()):
         logging.info("Incorrect username or password")
         raise HTTPException(400, {"message": "Incorrect username or password"})
 
+    api = None
     try :
         user.last_visit = datetime.now()
         await user.save(update_fields=["last_visit"])
 
-        logging.fatal(f"hello from {settings.KUMA_SERVER}")
-        api = UptimeKumaApi(settings.KUMA_SERVER)
+        logging.info(f"Logging in to UptimeKuma at {settings.KUMA_SERVER}")
+        api = UptimeKumaApi(settings.KUMA_SERVER, timeout=settings.KUMA_TIMEOUT)
         resp = api.login(settings.KUMA_USERNAME, settings.KUMA_PASSWORD)
 
         logging.info("Logged in to UptimeKuma")
@@ -43,5 +44,8 @@ async def login_access_token(form_data : OAuth2PasswordRequestForm = Depends()):
     except Exception as e:
         logging.fatal(e)
         raise HTTPException(400, str(e))
+    finally:
+        if api is not None:
+            api.disconnect()
 
     return JWToken(**response)

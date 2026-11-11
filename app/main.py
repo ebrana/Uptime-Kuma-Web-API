@@ -20,13 +20,13 @@ from routers import (
 from config import settings as app_settings, logger
 from app_setup import initialize_app
 
-app = FastAPI(title=app_settings.PROJECT_NAME)
+app = FastAPI(title=app_settings.PROJECT_NAME, version=app_settings.APP_VERSION)
 app.router.redirect_slashes = True
 
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=[origin.strip() for origin in app_settings.CORS_ALLOW_ORIGINS.split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,7 +34,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def enforce_https(request: Request, call_next):
-    if request.headers.get('x-forwarded-proto', request.url.scheme) != "https":
+    if app_settings.ENFORCE_HTTPS and request.headers.get('x-forwarded-proto', request.url.scheme) != "https":
         url = request.url.replace(scheme="https")
         return RedirectResponse(url=url)
     response = await call_next(request)
